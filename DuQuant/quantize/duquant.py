@@ -360,7 +360,11 @@ def duquant(
         # obtain output of full-precision model
 
         qlayer.half()
-        quant_inplace(qlayer)
+        # Apply rotation and permutation to weights without quantization
+        # We'll use GPTQ for weight quantization instead
+        from quantize.utils import apply_rotation_to_weights_inplace
+        apply_rotation_to_weights_inplace(qlayer)
+        # quant_inplace(qlayer)  # Commented out: weight quantization will be done by GPTQ
         set_quant_state(qlayer, weight_quant=False, act_quant=True)
 
         if args.epochs>0:

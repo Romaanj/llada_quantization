@@ -244,6 +244,14 @@ def quant_soft_inplace(model):
         if isinstance(module, QuantLinear):
             module.weight = module.weight_quantizer(module.weight, return_no_quant=True)
 
+@torch.no_grad()
+def apply_rotation_to_weights_inplace(model):
+    """Apply DuQuant rotation and permutation to weights without quantization.
+    This preserves the rotated weights for subsequent GPTQ quantization.
+    Rotation matrices are already stored in weight_quantizer.R and permutation_list."""
+    # Use quant_soft_inplace which applies rotation without quantization
+    quant_soft_inplace(model)
+
 def set_quant_state(self, weight_quant: bool = False, act_quant: bool = False):
     # setting weight quantization here does not affect actual forward pass
     self.use_weight_quant = weight_quant
