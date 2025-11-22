@@ -31,76 +31,255 @@ torch.backends.cudnn.benchmark = True
 
 
 def apply_gptq_to_model(lm, args, dataloader, logger):
-    """Apply GPTQ quantization to model weights that have been rotated by DuQuant."""
-    logger.info("=== Starting GPTQ quantization ===")
+    """Apply GPTQ quantization directly to DuQuant-rotated model in-place.
     
-    # Prepare calibration dataset for GPTQ
-    traindataset = []
-    for batch in dataloader:
-        input_ids = batch[0]
-        attention_mask = torch.ones_like(input_ids)
-        traindataset.append({"input_ids": input_ids, "attention_mask": attention_mask})
-        if len(traindataset) >= args.nsamples:
-            break
+    Critical: We use the existing lm.model that already has DuQuant rotation applied.
+    This ensures:
+    1. Model structure (QuantLinear modules) is preserved
+    2. Activation transformations (rotation) are already in place
+    3. Weight rotations are already applied
+    4. GPTQ calibration uses rotated activations (correct Hessian calculation)
+    """
+    logger.info("=== Starting GPTQ quantization on DuQuant-rotated model ===")
     
-    # Convert model to AutoGPTQ format
+    from auto_gptq.quantization.gptq import GPTQ
+    from quantize.int_linear import QuantLinear
+    
     model = lm.model
+    dev = lm.device
     
-    # Check model type
+    # Helper function to find QuantLinear modules
+    def find_quant_linear_modules(module, name=""):
+        """Find all QuantLinear modules in the model."""
+        res = {}
+        if isinstance(module, QuantLinear):
+            return {name: module}
+        for name1, child in module.named_children():
+            child_name = name + "." + name1 if name != "" else name1
+            res.update(find_quant_linear_modules(child, child_name))
+        return res
+    
+    # Prepare calibration dataset
+    # Note: We'll use the model's forward pass which already applies DuQuant rotation to activations
+    use_cache = model.config.use_cache
+    model.config.use_cache = False
+    model.eval()
+    
+    # Get layers
+    layers = None
     class_name = args.model.lower()
     if 'llada' in class_name:
-        from auto_gptq.modeling.llada import LladaGPTQForCausalLM
-        gptq_model_class = LladaGPTQForCausalLM
+        layers = model.model.transformer.blocks
+    elif 'dream' in class_name:
+        layers = model.model.layers
     else:
-        logger.error(f"Unsupported model type for GPTQ: {class_name}")
+        logger.error(f"Unsupported model type: {class_name}")
         return lm
     
-    # Configure GPTQ quantization
-    quantize_config = BaseQuantizeConfig(
-        bits=args.wbits,
-        group_size=128,  # Default group size
-        desc_act=False,
-        sym=False,
-    )
+    # Prepare initial layer inputs (these will have DuQuant rotation applied during forward pass)
+    layer_inputs = []
+    attention_masks = []
+    position_ids_list = []
     
-    logger.info(f"Creating GPTQ model wrapper with {args.wbits} bits quantization...")
+    logger.info(f"Collecting initial calibration data with DuQuant rotation applied...")
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(dataloader):
+            if batch_idx >= args.nsamples:
+                break
+            
+            input_ids = batch[0].to(dev)
+            
+            # Get first layer input by running embedding
+            # Each layer's input will have rotation applied (if act_quant is enabled)
+            hidden_states = model.model.transformer.wte(input_ids) if 'llada' in class_name else model.model.embed_tokens(input_ids)
+            
+            # Store first layer input
+            layer_inputs.append([hidden_states])
+            
+            # Create attention mask
+            attention_mask = torch.ones_like(input_ids)
+            attention_masks.append(attention_mask)
+            position_ids_list.append(None)  # Can be extended if needed
     
-    # Convert to GPTQ model format
-    # We need to create a GPTQ model from the existing model
-    # The model already has DuQuant rotation applied to weights
-    try:
-        # Get the model's state dict
-        model_state_dict = model.state_dict()
+    # Apply GPTQ to each layer sequentially (Layer-wise Quantization)
+    logger.info(f"Applying GPTQ quantization to {len(layers)} layers sequentially...")
+    
+    for i, layer in enumerate(layers):
+        logger.info(f"Quantizing layer {i+1}/{len(layers)}...")
+        layer = layer.to(dev)
         
-        # Create GPTQ model and load rotated weights
-        gptq_model = gptq_model_class.from_pretrained(
-            args.model,
-            quantize_config=quantize_config,
-            trust_remote_code=True,
-            torch_dtype=torch.float16,
-        )
+        # Find all QuantLinear modules in this layer
+        quant_linear_modules = find_quant_linear_modules(layer)
         
-        # Replace model weights with rotated weights from DuQuant
-        logger.info("Applying DuQuant rotated weights to GPTQ model...")
-        for name, param in model.named_parameters():
-            if 'weight' in name and name in gptq_model.model.state_dict():
-                gptq_model.model.state_dict()[name].copy_(param.data)
+        if not quant_linear_modules:
+            logger.info(f"  No QuantLinear modules found in layer {i+1}")
+            # Still need to propagate layer output even if no quantization
+            layer_outputs = []
+            for j, layer_inp in enumerate(layer_inputs):
+                if j < args.nsamples:
+                    layer_inp = [x.to(dev) for x in layer_inp]
+                    additional_inputs = {}
+                    if attention_masks[j] is not None:
+                        additional_inputs["attention_mask"] = attention_masks[j].to(dev)
+                    if position_ids_list[j] is not None:
+                        additional_inputs["position_ids"] = position_ids_list[j].to(dev)
+                    
+                    try:
+                        output = layer(*layer_inp, **additional_inputs)
+                        if isinstance(output, tuple):
+                            output = output[0]
+                        layer_outputs.append([output.cpu()])
+                    except Exception as e:
+                        try:
+                            output = layer(layer_inp[0])
+                            if isinstance(output, tuple):
+                                output = output[0]
+                            layer_outputs.append([output.cpu()])
+                        except:
+                            logger.warning(f"  Failed forward pass for sample {j}: {e}")
+                            layer_outputs.append(layer_inp)  # Keep original input
+            layer_inputs = layer_outputs  # Propagate to next layer
+            layer = layer.cpu()
+            continue
         
-        # Apply GPTQ quantization
-        logger.info(f"Applying GPTQ quantization with {args.nsamples} calibration samples...")
-        gptq_model.quantize(traindataset)
+        # Create GPTQ instances for each QuantLinear module
+        gptq_instances = {}
+        for name, quant_linear_module in quant_linear_modules.items():
+            # Get the rotated weight (already rotated by DuQuant)
+            linear_weight = quant_linear_module.weight.data.clone()
+            
+            # Create a temporary nn.Linear for GPTQ (GPTQ expects nn.Linear)
+            temp_linear = nn.Linear(
+                quant_linear_module.in_features,
+                quant_linear_module.out_features,
+                bias=quant_linear_module.bias is not None
+            ).to(dev)
+            temp_linear.weight.data = linear_weight
+            if quant_linear_module.bias is not None:
+                temp_linear.bias.data = quant_linear_module.bias.data.clone()
+            
+            # Initialize GPTQ
+            gptq = GPTQ(temp_linear)
+            gptq.quantizer.configure(
+                args.wbits,
+                perchannel=True,
+                sym=False,
+                mse=False,
+            )
+            gptq_instances[name] = (gptq, temp_linear, quant_linear_module)
         
-        # Update lm.model with quantized model
-        lm.model = gptq_model.model
-        logger.info("GPTQ quantization completed.")
+        # Collect activation statistics using forward hooks
+        # Activations will have DuQuant rotation already applied via act_quantizer
+        def make_add_batch(name):
+            gptq, _, quant_linear_module = gptq_instances[name]
+            def add_batch(_, inp, out):
+                # inp[0] is the input activation (already rotated by DuQuant act_quantizer)
+                # GPTQ's add_batch expects input for nn.Linear:
+                #   - 2D: (SeqLen, Hidden) -> adds batch dim -> (1, SeqLen, Hidden)
+                #   - 3D: (Batch, SeqLen, Hidden) -> reshape to (Batch*SeqLen, Hidden) -> transpose to (Hidden, Batch*SeqLen)
+                #   Then computes H = X @ X.T where X is (Hidden, Batch*SeqLen)
+                input_act = inp[0].data
+                
+                # QuantLinear receives input in various shapes depending on context:
+                # - MLP: (Batch, SeqLen, Hidden) - OK, GPTQ handles this
+                # - Attention: might be reshaped already
+                # - If 4D+, reshape to 2D: (Any, Hidden)
+                if len(input_act.shape) == 2:
+                    # Already 2D (SeqLen, Hidden) - GPTQ will add batch dim
+                    pass
+                elif len(input_act.shape) == 3:
+                    # 3D (Batch, SeqLen, Hidden) - GPTQ will handle reshape
+                    pass
+                elif len(input_act.shape) > 3:
+                    # 4D+ (e.g., Attention: Batch, NumHeads, SeqLen, HeadDim)
+                    # Reshape to (Any, Hidden) - GPTQ will treat as 2D and add batch dim
+                    input_act = input_act.reshape(-1, input_act.shape[-1])
+                else:
+                    # 1D or unexpected shape
+                    logger.warning(f"Unexpected input shape {input_act.shape} for {name}, attempting to reshape...")
+                    input_act = input_act.reshape(-1, quant_linear_module.in_features)
+                
+                # GPTQ doesn't use output for Hessian calculation, but we pass it anyway
+                # (It's used in DEBUG mode only)
+                output_act = out.data if isinstance(out, torch.Tensor) else out
+                if len(output_act.shape) > 3:
+                    output_act = output_act.reshape(-1, output_act.shape[-1])
+                
+                # Call GPTQ's add_batch which will:
+                # 1. Ensure input is 3D: (Batch, SeqLen, Hidden)
+                # 2. Reshape to 2D: (Batch*SeqLen, Hidden)
+                # 3. Transpose to: (Hidden, Batch*SeqLen)
+                # 4. Compute Hessian: H += X @ X.T where X is (Hidden, Batch*SeqLen)
+                gptq.add_batch(input_act, output_act)
+            return add_batch
         
-    except Exception as e:
-        logger.error(f"Error during GPTQ quantization: {e}")
-        import traceback
-        traceback.print_exc()
-        logger.info("Falling back to DuQuant-only quantization...")
-        # If GPTQ fails, we still have the rotated model
-        pass
+        handles = []
+        for name in quant_linear_modules.keys():
+            handles.append(quant_linear_modules[name].register_forward_hook(make_add_batch(name)))
+        
+        # Forward pass to collect activations (with DuQuant rotation already applied)
+        # IMPORTANT: Store outputs for next layer input propagation
+        layer_outputs = []
+        for j, layer_inp in enumerate(layer_inputs):
+            if j < args.nsamples:
+                layer_inp = [x.to(dev) for x in layer_inp]
+                additional_inputs = {}
+                if attention_masks[j] is not None:
+                    additional_inputs["attention_mask"] = attention_masks[j].to(dev)
+                if position_ids_list[j] is not None:
+                    additional_inputs["position_ids"] = position_ids_list[j].to(dev)
+                
+                try:
+                    output = layer(*layer_inp, **additional_inputs)
+                    if isinstance(output, tuple):
+                        output = output[0]
+                    layer_outputs.append([output.cpu()])  # Store output for next layer
+                except Exception as e:
+                    try:
+                        output = layer(layer_inp[0])
+                        if isinstance(output, tuple):
+                            output = output[0]
+                        layer_outputs.append([output.cpu()])  # Store output for next layer
+                    except:
+                        logger.warning(f"  Failed forward pass for sample {j}: {e}")
+                        layer_outputs.append(layer_inp)  # Keep original input if failed
+        
+        # Remove hooks
+        for h in handles:
+            h.remove()
+        
+        # Apply GPTQ quantization to each QuantLinear module
+        for name, (gptq, temp_linear, quant_linear_module) in gptq_instances.items():
+            logger.info(f"  Quantizing {name}...")
+            try:
+                scale, zero, g_idx = gptq.fasterquant(
+                    blocksize=128,
+                    percdamp=0.01,
+                    group_size=128,
+                    actorder=False,
+                    static_groups=False,
+                )
+                
+                # Replace QuantLinear weight with quantized weight
+                quant_linear_module.weight.data = temp_linear.weight.data.clone()
+                
+                gptq.free()
+                del gptq, temp_linear
+            except Exception as e:
+                logger.error(f"  Failed to quantize {name}: {e}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        # CRITICAL: Propagate layer outputs to next layer inputs
+        # This is essential for layer-wise quantization
+        layer_inputs = layer_outputs
+        
+        layer = layer.cpu()
+        torch.cuda.empty_cache()
+    
+    model.config.use_cache = use_cache
+    logger.info("GPTQ quantization completed.")
     
     return lm
 
@@ -364,4 +543,5 @@ def main():
 if __name__ == "__main__":
     print(sys.argv)
     main()
+
 
