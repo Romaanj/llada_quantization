@@ -70,8 +70,20 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
     class_name = args.model.lower()
     if 'llada' in class_name:
         layers = model.model.transformer.blocks
+        # Move embedding layer to device (duquant() moves it to CPU at the end)
+        # For llada, embedding is model.model.transformer.wte
+        # duquant() sets embed_tokens = wte, so they point to the same module
+        embedding_layer = model.model.transformer.wte
+        embedding_layer = embedding_layer.to(dev)
+        model.model.transformer.wte = embedding_layer
+        # Ensure embed_tokens also points to the same module on correct device
+        if hasattr(model.model.transformer, 'embed_tokens'):
+            model.model.transformer.embed_tokens = embedding_layer
     elif 'dream' in class_name:
         layers = model.model.layers
+        # Move embedding layer to device (duquant() moves it to CPU at the end)
+        if hasattr(model.model, 'embed_tokens'):
+            model.model.embed_tokens = model.model.embed_tokens.to(dev)
     else:
         logger.error(f"Unsupported model type: {class_name}")
         return lm
@@ -91,7 +103,11 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
             
             # Get first layer input by running embedding
             # Each layer's input will have rotation applied (if act_quant is enabled)
-            hidden_states = model.model.transformer.wte(input_ids) if 'llada' in class_name else model.model.embed_tokens(input_ids)
+            # CRITICAL: Embedding layer must be on the same device as input_ids
+            if 'llada' in class_name:
+                hidden_states = model.model.transformer.wte(input_ids)
+            else:
+                hidden_states = model.model.embed_tokens(input_ids)
             
             # Store first layer input
             layer_inputs.append([hidden_states])
