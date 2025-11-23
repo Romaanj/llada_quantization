@@ -3,7 +3,7 @@ export HF_DATASETS_TRUST_REMOTE_CODE=true
 export HF_ALLOW_CODE_EVAL=1
 
 DIRPATH="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-MODEL_PATH='/path/to/your/model' 
+MODEL_PATH='GSAI-ML/LLaDA-8B-Base' 
 W_BIT=4
 A_BIT=4
 

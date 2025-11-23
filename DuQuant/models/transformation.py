@@ -1,7 +1,7 @@
 
 import torch
 import pdb
-from quantize.int_linear import QuantLinear
+from DuQuant.quantize.int_linear import QuantLinear
 
 class TruncateFunction(torch.autograd.Function):
     @staticmethod

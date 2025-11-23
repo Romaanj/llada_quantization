@@ -5,7 +5,7 @@ from typing import Union
 import numpy as np
 import math
 from utils import get_rot, exchange_row_col, get_hadamard
-from quantize.const import CLIPMAX, CLIPMIN
+from DuQuant.quantize.const import CLIPMAX, CLIPMIN
 import random
 
 

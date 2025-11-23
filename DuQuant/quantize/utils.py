@@ -1,14 +1,14 @@
 from collections import OrderedDict
-from quantize.int_linear import QuantLinear
+from DuQuant.quantize.int_linear import QuantLinear
 import torch
 import torch.nn as nn
-from quantize.int_matmul import QuantMatMul
-from quantize.quantizer import UniformAffineQuantizer
+from DuQuant.quantize.int_matmul import QuantMatMul
+from DuQuant.quantize.quantizer import UniformAffineQuantizer
 
-from models.int_llada_layer import QuantLLadaDecoderLayer
-from models.transformation import *
+from DuQuant.models.int_llada_layer import QuantLLadaDecoderLayer
+from DuQuant.models.transformation import *
 import pickle
-from quantize.const import CLIPMIN
+from DuQuant.quantize.const import CLIPMIN
 
 def smooth_parameters(model, use_shift=True):
     params = []

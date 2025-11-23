@@ -1,10 +1,10 @@
 import torch
 from torch import nn
 from typing import Optional, Tuple, List
-from quantize.int_linear import QuantLinear
-from quantize.int_matmul import QuantMatMul
+from DuQuant.quantize.int_linear import QuantLinear
+from DuQuant.quantize.int_matmul import QuantMatMul
 import torch.nn.functional as F
-from quantize.du_norm import DuMistralRMSNorm
+from DuQuant.quantize.du_norm import DuMistralRMSNorm
 from collections import OrderedDict
 import math
 from transformers.models.mistral.modeling_mistral import MistralRotaryEmbedding,apply_rotary_pos_emb,MistralRMSNorm,repeat_kv
@@ -12,7 +12,7 @@ from transformers.models.mistral.configuration_mistral import MistralConfig
 from transformers.activations import ACT2FN
 import pdb
 import copy
-from models.transformation import *
+from DuQuant.models.transformation import *
 
 
 

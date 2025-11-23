@@ -5,18 +5,18 @@ import numpy as np
 import torch
 import time
 from datautils import get_loaders
-from lm_eval import evaluator
+from lm_evaluation_harness.lm_eval import evaluator
 from pprint import pprint
 from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
 import torch.nn as nn
-from quantize.duquant import duquant
+from DuQuant.quantize.duquant import duquant
 from tqdm import tqdm
 import utils
 from pathlib import Path
 from categories import subcategories, categories
 from transformers import AutoTokenizer
-from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
-from quantize.utils import apply_rotation_to_weights_inplace
+from AutoGPTQ.auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
+from DuQuant.quantize.utils import apply_rotation_to_weights_inplace
 
 # Import necessary functions from main.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -42,9 +42,9 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
     """
     logger.info("=== Starting GPTQ quantization on DuQuant-rotated model ===")
     
-    from auto_gptq.quantization.gptq import GPTQ
-    from quantize.int_linear import QuantLinear
-    from quantize.duquant import get_named_linears  # Use existing function from duquant
+    from AutoGPTQ.auto_gptq.quantization.gptq import GPTQ
+    from DuQuant.quantize.int_linear import QuantLinear
+    from DuQuant.quantize.duquant import get_named_linears  # Use existing function from duquant
     
     model = lm.model
     dev = lm.device
@@ -424,7 +424,7 @@ def main():
     args.model_family = args.net.split('-')[0]
     
     from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
-    from lm_eval.api.registry import get_model
+    from lm_evaluation_harness.lm_eval.api.registry import get_model
 
     class_name = args.model.lower()
 

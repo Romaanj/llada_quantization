@@ -1,20 +1,20 @@
 import torch
 from torch import nn
 from typing import Optional, Tuple, List
-from quantize.int_linear import QuantLinear
-from quantize.int_matmul import QuantMatMul
+from DuQuant.quantize.int_linear import QuantLinear
+from DuQuant.quantize.int_matmul import QuantMatMul
 import torch.nn.functional as F
-from quantize.du_norm import DuLladaRMSNorm
+from DuQuant.quantize.du_norm import DuLladaRMSNorm
 from collections import OrderedDict
 import math
 from transformers.models.llama.modeling_llama import LlamaRotaryEmbedding,apply_rotary_pos_emb,LlamaRMSNorm,repeat_kv
 from transformers.activations import ACT2FN
 import pdb
 import copy
-from models.configuration_llada import LLaDAConfig
-from models.transformation import *
-from models.modeling_llada import LLaDABlock
-from models.modeling_llada import ModelConfig, LayerNorm, init_weights, BufferCache
+from DuQuant.models.configuration_llada import LLaDAConfig
+from DuQuant.models.transformation import *
+from DuQuant.models.modeling_llada import LLaDABlock
+from DuQuant.models.modeling_llada import ModelConfig, LayerNorm, init_weights, BufferCache
 from dataclasses import fields
 
 def create_model_config_from_pretrained_config(config: LLaDAConfig):

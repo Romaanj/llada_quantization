@@ -6,11 +6,11 @@ import numpy as np
 import torch
 import time
 from datautils import get_loaders
-from lm_eval import evaluator
+from lm_evaluation_harness.lm_eval import evaluator
 from pprint import pprint
 from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
 import torch.nn as nn
-from quantize.duquant import duquant
+from DuQuant.quantize.duquant import duquant
 from tqdm import tqdm
 import utils
 from pathlib import Path

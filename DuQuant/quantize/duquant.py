@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-from models.int_llama_layer import QuantLlamaDecoderLayer
-from models.int_mistral_layer import QuantMistralDecoderLayer
-from models.int_llada_layer import QuantLLadaDecoderLayer
-from models.int_dream_layer import QuantDreamDecoderLayer
-from quantize.int_linear import QuantLinear
+from DuQuant.models.int_llama_layer import QuantLlamaDecoderLayer
+from DuQuant.models.int_mistral_layer import QuantMistralDecoderLayer
+from DuQuant.models.int_llada_layer import QuantLLadaDecoderLayer
+from DuQuant.models.int_dream_layer import QuantDreamDecoderLayer
+from DuQuant.quantize.int_linear import QuantLinear
 from contextlib import nullcontext
 import copy
 import math
@@ -12,8 +12,8 @@ import utils
 import os
 import pdb
 import gc
-from quantize.utils import *
-from quantize.const import CLIPMIN
+from DuQuant.quantize.utils import *
+from DuQuant.quantize.const import CLIPMIN
 import pdb
 
 

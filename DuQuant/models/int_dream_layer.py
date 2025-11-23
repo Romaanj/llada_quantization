@@ -1,18 +1,18 @@
 import torch
 from torch import nn
 from typing import Optional, Tuple, List
-from quantize.int_linear import QuantLinear
-from quantize.int_matmul import QuantMatMul
+from DuQuant.quantize.int_linear import QuantLinear
+from DuQuant.quantize.int_matmul import QuantMatMul
 import torch.nn.functional as F
-from quantize.du_norm import DuDreamRMSNorm
+from DuQuant.quantize.du_norm import DuDreamRMSNorm
 from collections import OrderedDict
 import math
-from models.modeling_dream import DreamRotaryEmbedding,apply_rotary_pos_emb,DreamRMSNorm,repeat_kv,logger
-from models.configuration_dream import DreamConfig
+from DuQuant.models.modeling_dream import DreamRotaryEmbedding,apply_rotary_pos_emb,DreamRMSNorm,repeat_kv,logger
+from DuQuant.models.configuration_dream import DreamConfig
 from transformers.activations import ACT2FN
 import pdb
 import copy
-from models.transformation import *
+from DuQuant.models.transformation import *
 
 
 class QuantDreamMLP(nn.Module):
