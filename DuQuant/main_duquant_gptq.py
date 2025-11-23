@@ -44,20 +44,10 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
     
     from auto_gptq.quantization.gptq import GPTQ
     from quantize.int_linear import QuantLinear
+    from quantize.duquant import get_named_linears  # Use existing function from duquant
     
     model = lm.model
     dev = lm.device
-    
-    # Helper function to find QuantLinear modules
-    def find_quant_linear_modules(module, name=""):
-        """Find all QuantLinear modules in the model."""
-        res = {}
-        if isinstance(module, QuantLinear):
-            return {name: module}
-        for name1, child in module.named_children():
-            child_name = name + "." + name1 if name != "" else name1
-            res.update(find_quant_linear_modules(child, child_name))
-        return res
     
     # Prepare calibration dataset
     # Note: We'll use the model's forward pass which already applies DuQuant rotation to activations
@@ -110,6 +100,11 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
                 hidden_states = model.model.embed_tokens(input_ids)
             
             # Store first layer input
+            # Note: Check first layer's dtype to match input dtype
+            if len(layers) > 0:
+                first_layer_dtype = next(layers[0].parameters()).dtype if list(layers[0].parameters()) else torch.float16
+                hidden_states = hidden_states.to(first_layer_dtype)
+            
             layer_inputs.append([hidden_states])
             
             # Create attention mask
@@ -124,16 +119,30 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
         logger.info(f"Quantizing layer {i+1}/{len(layers)}...")
         layer = layer.to(dev)
         
+        # Check layer dtype - DuQuant sets layers to half() after rotation
+        # We need to match input dtype to layer dtype
+        layer_dtype = next(layer.parameters()).dtype if list(layer.parameters()) else torch.float16
+        
         # Find all QuantLinear modules in this layer
-        quant_linear_modules = find_quant_linear_modules(layer)
+        # Use get_named_linears from duquant.py which is already tested
+        quant_linear_modules = get_named_linears(layer)
+        
+        # Debug: Print module names to see structure
+        if not quant_linear_modules:
+            logger.warning(f"  No QuantLinear modules found in layer {i+1}")
+            # Try to see what modules exist
+            all_modules = {name: type(m).__name__ for name, m in layer.named_modules()}
+            logger.info(f"  Layer {i+1} has {len(all_modules)} modules. Sample types: {list(all_modules.values())[:10]}")
+            # List all module names
+            logger.info(f"  Layer {i+1} module names: {list(all_modules.keys())[:15]}")
         
         if not quant_linear_modules:
-            logger.info(f"  No QuantLinear modules found in layer {i+1}")
             # Still need to propagate layer output even if no quantization
             layer_outputs = []
             for j, layer_inp in enumerate(layer_inputs):
                 if j < args.nsamples:
-                    layer_inp = [x.to(dev) for x in layer_inp]
+                    # Match dtype with layer
+                    layer_inp = [x.to(dev).to(layer_dtype) for x in layer_inp]
                     additional_inputs = {}
                     if attention_masks[j] is not None:
                         additional_inputs["attention_mask"] = attention_masks[j].to(dev)
@@ -235,10 +244,12 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
         
         # Forward pass to collect activations (with DuQuant rotation already applied)
         # IMPORTANT: Store outputs for next layer input propagation
+        # CRITICAL: Match dtype with layer (layer is half() after DuQuant)
         layer_outputs = []
         for j, layer_inp in enumerate(layer_inputs):
             if j < args.nsamples:
-                layer_inp = [x.to(dev) for x in layer_inp]
+                # Convert input to device and match dtype with layer
+                layer_inp = [x.to(dev).to(layer_dtype) for x in layer_inp]
                 additional_inputs = {}
                 if attention_masks[j] is not None:
                     additional_inputs["attention_mask"] = attention_masks[j].to(dev)
