@@ -212,7 +212,7 @@ def duquant(
             rotate_inps = rotate_inps.to("cuda:0")
             fp_inps_2 = fp_inps_2.to("cuda:0") if args.aug_loss else None
 
-        if args.quant_method == 'duquant':
+        if args.quant_method in ['duquant', 'mxfp4']:
             set_init_duquant_params_state(qlayer, True)
 
         set_quant_state(qlayer, weight_quant=False, act_quant=False)
@@ -270,7 +270,7 @@ def duquant(
         smooth_and_let_inplace(qlayer, args)
 
         # real smooth and quantization      
-        if args.quant_method == 'duquant':
+        if args.quant_method in ['duquant', 'mxfp4']:
             set_init_duquant_params_state(qlayer, False)
             set_quant_state(qlayer, weight_quant=True, act_quant=True)
             if duquant_parameters.get(i):

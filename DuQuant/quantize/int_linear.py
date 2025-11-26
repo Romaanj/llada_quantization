@@ -45,7 +45,7 @@ class QuantLinear(nn.Module):
 
         self.disable_input_quant = disable_input_quant
         self.use_temporary_parameter = False
-        self.init_duquant_params = torch.tensor(0) if weight_quant_params['quant_method'] == 'duquant' else torch.tensor(1)
+        self.init_duquant_params = torch.tensor(0) if weight_quant_params['quant_method'] in ['duquant', 'mxfp4'] else torch.tensor(1)
 
 
     def forward(self, input: torch.Tensor):
@@ -63,6 +63,11 @@ class QuantLinear(nn.Module):
         else:
             weight = self.weight
             bias = self.bias
+        
+        # dtype 일치시키기 (GPTQ 후 weight가 float16일 수 있음)
+        if input.dtype != weight.dtype:
+            input = input.to(weight.dtype)
+        
         out = self.fwd_func(input, weight, bias, **self.fwd_kwargs)
 
         return out

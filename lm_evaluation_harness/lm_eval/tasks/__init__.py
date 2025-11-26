@@ -5,10 +5,10 @@ import os
 from functools import partial
 from typing import Dict, List, Mapping, Optional, Union
 
-from lm_eval import utils
-from lm_eval.api.group import ConfigurableGroup, GroupConfig
-from lm_eval.api.task import ConfigurableTask, Task
-from lm_eval.evaluator_utils import get_subtask_list
+from lm_evaluation_harness.lm_eval import utils
+from lm_evaluation_harness.lm_eval.api.group import ConfigurableGroup, GroupConfig
+from lm_evaluation_harness.lm_eval.api.task import ConfigurableTask, Task
+from lm_evaluation_harness.lm_eval.evaluator_utils import get_subtask_list
 
 
 GROUP_ONLY_KEYS = list(GroupConfig().to_dict().keys())

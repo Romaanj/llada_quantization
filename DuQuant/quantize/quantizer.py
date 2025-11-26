@@ -6,6 +6,7 @@ import numpy as np
 import math
 from utils import get_rot, exchange_row_col, get_hadamard
 from DuQuant.quantize.const import CLIPMAX, CLIPMIN
+from DuQuant.quantize.mxfp4_quantizer import MXFP4Quantizer
 import random
 
 
@@ -38,6 +39,7 @@ class UniformAffineQuantizer(nn.Module):
         rotate=True,
         max_rotation_step=1024,
         permutation_times=1,
+        mxfp4_block_size=32,
     ):
         """
         support cluster quantize
@@ -93,6 +95,8 @@ class UniformAffineQuantizer(nn.Module):
         self.act_group_size = act_group_size
         self.lac = lac
         self.swc = swc
+        self.mxfp4_block_size = mxfp4_block_size
+        self.mxfp4_helper = None
 
         self.init_duquant_params = torch.tensor(1)
 
@@ -103,7 +107,7 @@ class UniformAffineQuantizer(nn.Module):
 
         if self.rotate is None:
             self.H = get_hadamard(self.block_size)
-        elif self.quant_method == 'duquant':
+        elif self.quant_method in ['duquant', 'mxfp4']:
             self.R, self.permutation_list = [], []
             if self.rotate is not False:
                 self.init_duquant_params = torch.tensor(0)
@@ -312,7 +316,7 @@ class UniformAffineQuantizer(nn.Module):
                 hadamard = self.H.to(x)
                 x = x.reshape(-1, self.block_size)
                 x = x.matmul(hadamard).view(x_shape)
-        elif self.quant_method == 'duquant':
+        elif self.quant_method in ['duquant', 'mxfp4']:
             if self.rotate:
                 if not self.init_duquant_params:
                     x = self.online_duquant_cali(x)
@@ -382,6 +386,9 @@ class UniformAffineQuantizer(nn.Module):
         if self.metric == "fix0to1":
             return x.mul_(2**self.n_bits-1).round_().div_(2**self.n_bits-1)
 
+        if self.quant_method == 'mxfp4':
+            return self.mxfp4_quantize(x)
+
         if self.dynamic_method == "per_token" or self.dynamic_method == "per_channel":
             self.per_token_dynamic_calibration(x)
         else:
@@ -423,10 +430,17 @@ class UniformAffineQuantizer(nn.Module):
         self.round_zero_point = zero_point.clamp(min=-CLIPMAX, max=CLIPMAX).round()
         
     def register_scales_and_zeros(self):
+        if getattr(self, 'scale', None) is None or getattr(self, 'round_zero_point', None) is None:
+            return
         self.register_buffer('scales', self.scale)
         self.register_buffer('zeros', self.round_zero_point)
         del self.scale
         del self.round_zero_point
+
+    def mxfp4_quantize(self, x: torch.Tensor):
+        if self.mxfp4_helper is None:
+            self.mxfp4_helper = MXFP4Quantizer(block_size=self.mxfp4_block_size)
+        return self.mxfp4_helper(x)
 
     def register_duquant_params(self):
         if self.rotate is not True:

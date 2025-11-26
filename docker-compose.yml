@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  llada-quantization:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llada-quantization:latest
+    container_name: llada-quant
+    
+    # GPU 설정 (A100)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # 볼륨 마운트
+    volumes:
+      - .:/workspace/llada_quantization
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./cache:/workspace/llada_quantization/cache
+      - ./outputs:/workspace/llada_quantization/outputs
+    
+    # 환경 변수
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - HF_HOME=/root/.cache/huggingface
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface/transformers
+      - PYTHONPATH=/workspace/llada_quantization
+    
+    # 공유 메모리 크기 증가 (대규모 모델용)
+    shm_size: '32gb'
+    
+    # 인터랙티브 모드
+    stdin_open: true
+    tty: true
+    
+    # 작업 디렉토리
+    working_dir: /workspace/llada_quantization
+    
+    # 기본 명령어
+    command: /bin/bash
+

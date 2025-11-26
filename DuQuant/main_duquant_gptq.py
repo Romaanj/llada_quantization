@@ -4,8 +4,10 @@ import random
 import numpy as np
 import torch
 import time
+import pickle
 from datautils import get_loaders
 from lm_evaluation_harness.lm_eval import evaluator
+import lm_evaluation_harness.lm_eval.models  # 모델 등록을 위해 필요
 from pprint import pprint
 from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
 import torch.nn as nn
@@ -17,6 +19,10 @@ from categories import subcategories, categories
 from transformers import AutoTokenizer
 from AutoGPTQ.auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
 from DuQuant.quantize.utils import apply_rotation_to_weights_inplace
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import necessary functions from main.py
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -194,16 +200,18 @@ def apply_gptq_to_model(lm, args, dataloader, logger):
             gptq_instances[name] = (gptq, temp_linear, quant_linear_module)
         
         # Collect activation statistics using forward hooks
-        # Activations will have DuQuant rotation already applied via act_quantizer
+        # Apply DuQuant rotation to activations (without quantization) for correct Hessian calculation
         def make_add_batch(name):
             gptq, _, quant_linear_module = gptq_instances[name]
             def add_batch(_, inp, out):
-                # inp[0] is the input activation (already rotated by DuQuant act_quantizer)
-                # GPTQ's add_batch expects input for nn.Linear:
-                #   - 2D: (SeqLen, Hidden) -> adds batch dim -> (1, SeqLen, Hidden)
-                #   - 3D: (Batch, SeqLen, Hidden) -> reshape to (Batch*SeqLen, Hidden) -> transpose to (Hidden, Batch*SeqLen)
-                #   Then computes H = X @ X.T where X is (Hidden, Batch*SeqLen)
-                input_act = inp[0].data
+                # inp[0] is the raw input activation (before rotation and quantization)
+                # We need to apply rotation only (no quantization) for Hessian calculation
+                input_act = inp[0].data.clone()
+                
+                # Apply DuQuant rotation only (no quantization) using return_no_quant=True
+                # This ensures Hessian is computed on rotated activations matching inference
+                if quant_linear_module.act_quantizer is not None and not quant_linear_module.disable_input_quant:
+                    input_act = quant_linear_module.act_quantizer(input_act, return_no_quant=True)
                 
                 # QuantLinear receives input in various shapes depending on context:
                 # - MLP: (Batch, SeqLen, Hidden) - OK, GPTQ handles this
@@ -368,6 +376,7 @@ def main():
     parser.add_argument("--lac", type=float, default=None)
     parser.add_argument("--swc", type=float, default=None)
     parser.add_argument("--block_size", type=int, default=128)
+    parser.add_argument("--mxfp4_block_size", type=int, default=32, help="Block size for MXFP4 shared scales")
     
     # MMLU arguments
     parser.add_argument("--mmlu_data_dir", default="./mmlu/data", type=str)
@@ -384,7 +393,7 @@ def main():
     parser.add_argument("--max-gpu-memory", type=str)
     parser.add_argument("--dtype", type=str, choices=["float32", "float16", "bfloat16"], default=None)
     parser.add_argument("--revision", type=str, default="main")
-    parser.add_argument("--quant_method", type=str, default="duquant", choices=["duquant", "hadamard", None])
+    parser.add_argument("--quant_method", type=str, default="duquant", choices=["duquant", "hadamard", "mxfp4", None])
     parser.add_argument("--steps", type=int, default=1024)
     parser.add_argument("--mc_num", type=int, default=128)
     parser.add_argument("--gen_length", type=int, default=1024)
@@ -393,6 +402,8 @@ def main():
     parser.add_argument("--diffusion_steps", type=int, default=512)
     parser.add_argument("--get_wa", action="store_true")
     parser.add_argument("--use_gptq", action="store_true", help="Use GPTQ for weight quantization after DuQuant rotation")
+    parser.add_argument("--quantized_model", type=str, default=None, help="Path to pre-quantized model checkpoint to skip quantization")
+    parser.add_argument("--save_quantized", type=str, default=None, help="Path to save quantized model after quantization")
     
     args = parser.parse_args()
     random.seed(args.seed)
@@ -419,34 +430,47 @@ def main():
     logger.info(args)
     
     # Load model
-    if args.net is None:
-        args.net = args.model.split('/')[-1]
-    args.model_family = args.net.split('-')[0]
-    
-    from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
-    from lm_evaluation_harness.lm_eval.api.registry import get_model
-
-    class_name = args.model.lower()
-
-    if 'llada' in class_name:
-        model_cls = get_model('llada_dist')
-        model_args = dict(
-            steps=args.steps, gen_length=args.gen_length, block_length=args.block_length, 
-            temperature=0., cfg_scale=0., remasking='low_confidence', mc_num=args.mc_num, 
-            batch_size=args.batch_size
-        )
-        lm = model_cls(model_path=args.model, **model_args)
-    elif 'dream' in class_name and 'base' in args.model.lower():
-        model_cls = get_model('dream_base')
-        model_args = dict(
-            diffusion_steps=args.diffusion_steps, max_new_tokens=args.max_new_tokens, 
-            mc_num=args.mc_num, batch_size=args.batch_size
-        )
-        lm = model_cls(pretrained=args.model, **model_args)
+    if args.quantized_model is not None:
+        # 새로 모델을 만들지 않고, 전체 lm 객체를 그대로 로드
+        logger.info(f"=== Loading pre-quantized lm object from {args.quantized_model} ===")
+        tick = time.time()
+        try:
+            lm = torch.load(args.quantized_model, map_location="cpu")
+        except (RuntimeError, pickle.PickleError):
+            import dill
+            lm = torch.load(args.quantized_model, map_location="cpu", pickle_module=dill)
+        logger.info(f"Pre-quantized lm loaded in {time.time() - tick:.2f} seconds")
+        # model_path 정보를 유지하고 싶으면 lm 쪽에서 가져오고, 없으면 args.model 사용
+        args.model_path = getattr(lm, "model_path", args.model)
     else:
-        raise NotImplementedError
+        if args.net is None:
+            args.net = args.model.split('/')[-1]
+        args.model_family = args.net.split('-')[0]
         
-    args.model_path = args.model
+        from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
+        from lm_evaluation_harness.lm_eval.api.registry import get_model
+        
+        class_name = args.model.lower()
+        
+        if 'llada' in class_name:
+            model_cls = get_model('llada_dist')
+            model_args = dict(
+                steps=args.steps, gen_length=args.gen_length, block_length=args.block_length, 
+                temperature=0., cfg_scale=0., remasking='low_confidence', mc_num=args.mc_num, 
+                batch_size=args.batch_size
+            )
+            lm = model_cls(model_path=args.model, **model_args)
+        elif 'dream' in class_name and 'base' in args.model.lower():
+            model_cls = get_model('dream_base')
+            model_args = dict(
+                diffusion_steps=args.diffusion_steps, max_new_tokens=args.max_new_tokens, 
+                mc_num=args.mc_num, batch_size=args.batch_size
+            )
+            lm = model_cls(pretrained=args.model, **model_args)
+        else:
+            raise NotImplementedError
+            
+        args.model_path = args.model
 
     lm.seqlen = 2048
     lm.model.eval()
@@ -466,6 +490,7 @@ def main():
         "block_size": args.block_size,
         "max_rotation_step": args.max_rotation_step,
         "permutation_times": args.permutation_times,
+        "mxfp4_block_size": args.mxfp4_block_size,
     }
     args.act_quant_params = {
         "n_bits": args.abits,
@@ -478,6 +503,7 @@ def main():
         "block_size": args.block_size,
         "max_rotation_step": args.max_rotation_step,
         "permutation_times": args.permutation_times,
+        "mxfp4_block_size": args.mxfp4_block_size,
     }
     args.q_quant_params = {
         "n_bits": args.abits,
@@ -487,6 +513,7 @@ def main():
         "quant_method": args.quant_method,
         "block_size": args.block_size,
         "max_rotation_step": args.max_rotation_step,
+        "mxfp4_block_size": args.mxfp4_block_size,
     }
     args.k_quant_params = {
         "n_bits": args.abits,
@@ -495,12 +522,16 @@ def main():
         "dynamic_method": args.a_dynamic_method,
         "quant_method": args.quant_method,
         "block_size": args.block_size,
+        "mxfp4_block_size": args.mxfp4_block_size,
     }
     args.v_quant_params = {
         "n_bits": args.abits,
         "per_channel_axes": [],
         "symmetric": False,
         "dynamic_method": args.a_dynamic_method,
+        "quant_method": args.quant_method,
+        "block_size": args.block_size,
+        "mxfp4_block_size": args.mxfp4_block_size,
     }
     args.p_quant_params = {
         "n_bits": 16,
@@ -519,8 +550,25 @@ def main():
         import get_rot
         get_rot.main()
 
+    # Check if loading pre-quantized model
+    if args.quantized_model is not None:
+        logger.info(f"=== Loading pre-quantized model from {args.quantized_model} ===")
+        tick = time.time()
+        
+        checkpoint = torch.load(args.quantized_model, map_location='cpu')
+        
+        # Load model state dict
+        lm.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load quantization config if available
+        if 'quant_config' in checkpoint:
+            quant_config = checkpoint['quant_config']
+            logger.info(f"Loaded quantization config: wbits={quant_config.get('wbits')}, abits={quant_config.get('abits')}")
+        
+        logger.info(f"Pre-quantized model loaded in {time.time() - tick:.2f} seconds")
+        
     # Step 1: Apply DuQuant rotation (without weight quantization)
-    if args.wbits < 16 or args.abits < 16:
+    elif args.wbits < 16 or args.abits < 16:
         logger.info("=== Step 1: Apply DuQuant rotation and permutation ===")
         tick = time.time()
         
@@ -562,6 +610,23 @@ def main():
             tick = time.time()
             lm = apply_gptq_to_model(lm, args, dataloader, logger)
             logger.info(f"GPTQ quantization completed in {time.time() - tick:.2f} seconds")
+        
+        # Save quantized model if requested
+        if args.save_quantized is not None:
+            logger.info(f"=== Saving quantized lm object to {args.save_quantized} ===")
+            tick = time.time()
+            
+            # Create directory if needed
+            save_dir = Path(args.save_quantized).parent
+            save_dir.mkdir(parents=True, exist_ok=True)
+            
+            # lm 전체 객체를 그대로 저장 (구조 + 가중치 + quantizer 상태 포함)
+            try:
+                torch.save(lm, args.save_quantized)
+            except (RuntimeError, pickle.PickleError):
+                import dill
+                torch.save(lm, args.save_quantized, pickle_module=dill)
+            logger.info(f"Quantized lm saved in {time.time() - tick:.2f} seconds")
     
     move_to_device(lm, args, logger)
     evaluate(lm, args, logger)

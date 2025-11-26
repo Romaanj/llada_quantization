@@ -7,6 +7,7 @@ import torch
 import time
 from datautils import get_loaders
 from lm_evaluation_harness.lm_eval import evaluator
+import lm_evaluation_harness.lm_eval.models  # 모델 등록을 위해 필요
 from pprint import pprint
 from parallel_utils import map_layers_to_multi_gpus, get_lowest_occupied_gpu
 import torch.nn as nn
@@ -15,6 +16,10 @@ from tqdm import tqdm
 import utils
 from pathlib import Path
 from categories import subcategories, categories
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 torch.backends.cudnn.benchmark = True
@@ -35,15 +40,34 @@ net_choices = [
 ]
 
 def move_to_device(lm, args, logger):
+    # 모델의 기준 dtype 결정 (첫 번째 레이어의 dtype 사용)
+    class_name = lm.model.__class__.__name__.lower()
+    if 'llada' in class_name:
+        layers = lm.model.model.transformer.blocks
+    else:
+        layers = lm.model.model.layers
+    
+    # 첫 번째 레이어의 dtype을 기준으로 사용
+    target_dtype = None
+    if len(layers) > 0:
+        for param in layers[0].parameters():
+            target_dtype = param.dtype
+            break
+    
+    if target_dtype is None:
+        target_dtype = torch.bfloat16  # 기본값
+    
+    logger.info(f"Moving model to device with dtype: {target_dtype}")
+    
     if args.multigpu:
-        if lm.model.__class__.__name__ == "LLaDAModelLM":
+        if 'llada' in class_name:
             map_layers_to_multi_gpus(lm.model.model.transformer.blocks)
             input_device = lm.model.model.transformer.blocks[0].device
             output_device = lm.model.model.transformer.blocks[-1].device
             assert input_device == output_device
-            lm.model.model.transformer.wte.to(input_device)
-            lm.model.model.transformer.ln_f.to(output_device)
-            lm.model.model.transformer.ff_out.to(output_device)
+            lm.model.model.transformer.wte.to(input_device).to(target_dtype)
+            lm.model.model.transformer.ln_f.to(output_device).to(target_dtype)
+            lm.model.model.transformer.ff_out.to(output_device).to(target_dtype)
             lm.model.model.transformer.wte.register_forward_pre_hook(forward_hook_wrapper(input_device), with_kwargs=True)
         else:
             map_layers_to_multi_gpus(lm.model.model.layers)
@@ -51,11 +75,20 @@ def move_to_device(lm, args, logger):
             output_device = lm.model.model.layers[-1].device
             assert input_device == output_device
             lm._device = input_device
-            lm.model.model.embed_tokens.to(input_device)
-            lm.model.model.norm.to(output_device)
-            lm.model.lm_head.to(output_device)
+            lm.model.model.embed_tokens.to(input_device).to(target_dtype)
+            lm.model.model.norm.to(output_device).to(target_dtype)
+            lm.model.lm_head.to(output_device).to(target_dtype)
     else:
         lm.model = lm.model.to(lm.device)
+        # dtype 일관성 보장: 모든 모듈을 target_dtype으로 변환
+        if 'llada' in class_name:
+            lm.model.model.transformer.wte.to(target_dtype)
+            lm.model.model.transformer.ln_f.to(target_dtype)
+            lm.model.model.transformer.ff_out.to(target_dtype)
+        else:
+            lm.model.model.embed_tokens.to(target_dtype)
+            lm.model.model.norm.to(target_dtype)
+            lm.model.lm_head.to(target_dtype)
 
 
 def test_output(lm, args):
@@ -157,19 +190,30 @@ def evaluate(lm, args, logger):
             use_cache = lm.model.config.use_cache
             lm.model.config.use_cache = False
             lm.model.eval()
+            
+            # 모델의 기준 dtype 결정
+            class_name = lm.model.__class__.__name__.lower()
+            if 'llada' in class_name:
+                target_dtype = lm.model.model.transformer.ff_out.weight.dtype
+            else:
+                target_dtype = lm.model.lm_head.weight.dtype
+            
             nlls = []
             for i in tqdm(range(nsamples)):
                 batch = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)].to(lm.device)
-                outputs = lm.model.model(batch)
-                hidden_states = outputs[0]
-                logits = lm.model.lm_head(hidden_states)
+                
+                with torch.cuda.amp.autocast(dtype=target_dtype):
+                    outputs = lm.model.model(batch)
+                    hidden_states = outputs[0]
+                    logits = lm.model.lm_head(hidden_states)
+                
                 shift_logits = logits[:, :-1, :]
                 shift_labels = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)][
                     :, 1:
                 ].to(lm.model.lm_head.weight.device)
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(
-                    shift_logits.view(-1, shift_logits.size(-1)),
+                    shift_logits.view(-1, shift_logits.size(-1)).float(),
                     shift_labels.view(-1),
                 )
                 neg_log_likelihood = loss.float() * lm.seqlen
@@ -455,7 +499,7 @@ def main():
     # lm = 
     from transformers import AutoConfig, AutoTokenizer, AutoModelForCausalLM
     # from lm_eval.models.huggingface import HFLM
-    from lm_eval.api.registry import get_model
+    from lm_evaluation_harness.lm_eval.api.registry import get_model
 
     # model_cls = get_model('llada_dist')
     class_name = args.model.lower()

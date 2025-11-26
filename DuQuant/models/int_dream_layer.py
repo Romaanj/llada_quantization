@@ -36,7 +36,7 @@ class QuantDreamMLP(nn.Module):
                                            args.up_weight_quant_params,
                                            args.up_act_quant_params)
         self.act_fn = ACT2FN[hidden_act]
-        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] == 'duquant' else torch.tensor(1)
+        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] in ['duquant', 'mxfp4'] else torch.tensor(1)
 
     def forward(self, x):
         if not self.init_duquant_params:
@@ -99,7 +99,7 @@ class QuantDreamAttention(nn.Module):
 
         self.use_weight_quant = False
         self.use_act_quant = False
-        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] == 'duquant' else torch.tensor(1)
+        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] in ['duquant', 'mxfp4'] else torch.tensor(1)
         self.layer_idx = org_module.layer_idx
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):

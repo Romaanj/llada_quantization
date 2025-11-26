@@ -1,0 +1,40 @@
+[2025-11-25 16:48:33 root] (main_duquant_gptq.py 429): INFO Namespace(model='GSAI-ML/LLaDA-8B-Base', cache_dir='./cache', output_dir='./duquant_gptq_log/LLaDA-8B-Base_w4a4', save_dir=None, resume=None, calib_dataset='wikitext2', test_dataset='wikitext2', nsamples=128, batch_size=1, seed=2, tasks='minerva_math', eval_ppl=False, num_fewshot=0, wbits=4, abits=4, group_size=None, alpha=0.5, let_alpha=0.8, act_group_size=None, let_lr=0.005, smooth_lr=0.0001, lwc_lr=0.01, wd=0, epochs=0, smooth_epochs=0, smooth=True, let=False, lwc=False, aug_loss=False, symmetric=False, a_dynamic_method='per_token', w_dynamic_method='per_channel', limit=-1, multigpu=False, deactive_amp=False, attn_implementation='eager', net=None, act_scales=None, act_shifts=None, max_rotation_step=256, permutation_times=1, lac=0.9, swc=0.8, block_size=128, mxfp4_block_size=32, mmlu_data_dir='./mmlu/data', eval_mmlu=False, eval_mtbench=False, bench_name='mt_bench', question_begin=None, question_end=None, answer_file=None, max_new_token=1024, num_choices=1, num_gpus_per_model=1, num_gpus_total=1, max_gpu_memory=None, dtype=None, revision='main', quant_method='mxfp4', steps=256, mc_num=128, gen_length=256, block_length=64, max_new_tokens=128, diffusion_steps=512, get_wa=False, use_gptq=False, quantized_model=None, save_quantized=None)
+[2025-11-25 16:48:34 accelerate.utils.other] (other.py 492): WARNING Detected kernel version 5.4.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[2025-11-25 16:49:21 root] (main_duquant_gptq.py 558): INFO === Step 1: Apply DuQuant rotation and permutation ===
+[2025-11-25 16:49:21 root] (main_duquant_gptq.py 565): INFO load calibration from ./cache/dataloader_LLaDA_wikitext2_128.cache
+[2025-11-25 16:49:21 root] (duquant.py 49): INFO Starting ...
+[2025-11-25 16:49:25 root] (duquant.py 178): INFO No attention mask caught from the first layer. Seems that model's attention works without a mask.
+[2025-11-25 16:49:25 root] (duquant.py 203): INFO === Start quantize layer 0 ===
+[2025-11-25 16:49:46 root] (duquant.py 203): INFO === Start quantize layer 1 ===
+[2025-11-25 16:50:06 root] (duquant.py 203): INFO === Start quantize layer 2 ===
+[2025-11-25 16:50:23 root] (duquant.py 203): INFO === Start quantize layer 3 ===
+[2025-11-25 16:50:42 root] (duquant.py 203): INFO === Start quantize layer 4 ===
+[2025-11-25 16:51:00 root] (duquant.py 203): INFO === Start quantize layer 5 ===
+[2025-11-25 16:51:18 root] (duquant.py 203): INFO === Start quantize layer 6 ===
+[2025-11-25 16:51:37 root] (duquant.py 203): INFO === Start quantize layer 7 ===
+[2025-11-25 16:51:55 root] (duquant.py 203): INFO === Start quantize layer 8 ===
+[2025-11-25 16:52:13 root] (duquant.py 203): INFO === Start quantize layer 9 ===
+[2025-11-25 16:52:31 root] (duquant.py 203): INFO === Start quantize layer 10 ===
+[2025-11-25 16:52:49 root] (duquant.py 203): INFO === Start quantize layer 11 ===
+[2025-11-25 16:53:08 root] (duquant.py 203): INFO === Start quantize layer 12 ===
+[2025-11-25 16:53:25 root] (duquant.py 203): INFO === Start quantize layer 13 ===
+[2025-11-25 16:53:44 root] (duquant.py 203): INFO === Start quantize layer 14 ===
+[2025-11-25 16:54:02 root] (duquant.py 203): INFO === Start quantize layer 15 ===
+[2025-11-25 16:54:20 root] (duquant.py 203): INFO === Start quantize layer 16 ===
+[2025-11-25 16:54:39 root] (duquant.py 203): INFO === Start quantize layer 17 ===
+[2025-11-25 16:54:58 root] (duquant.py 203): INFO === Start quantize layer 18 ===
+[2025-11-25 16:55:15 root] (duquant.py 203): INFO === Start quantize layer 19 ===
+[2025-11-25 16:55:34 root] (duquant.py 203): INFO === Start quantize layer 20 ===
+[2025-11-25 16:55:53 root] (duquant.py 203): INFO === Start quantize layer 21 ===
+[2025-11-25 16:56:11 root] (duquant.py 203): INFO === Start quantize layer 22 ===
+[2025-11-25 16:56:29 root] (duquant.py 203): INFO === Start quantize layer 23 ===
+[2025-11-25 16:56:47 root] (duquant.py 203): INFO === Start quantize layer 24 ===
+[2025-11-25 16:57:06 root] (duquant.py 203): INFO === Start quantize layer 25 ===
+[2025-11-25 16:57:25 root] (duquant.py 203): INFO === Start quantize layer 26 ===
+[2025-11-25 16:57:42 root] (duquant.py 203): INFO === Start quantize layer 27 ===
+[2025-11-25 16:58:01 root] (duquant.py 203): INFO === Start quantize layer 28 ===
+[2025-11-25 16:58:21 root] (duquant.py 203): INFO === Start quantize layer 29 ===
+[2025-11-25 16:58:41 root] (duquant.py 203): INFO === Start quantize layer 30 ===
+[2025-11-25 16:59:00 root] (duquant.py 203): INFO === Start quantize layer 31 ===
+[2025-11-25 16:59:24 root] (main_duquant_gptq.py 591): INFO DuQuant rotation completed in 603.37 seconds
+[2025-11-25 16:59:24 root] (main.py 60): INFO Moving model to device with dtype: torch.float16

@@ -3,7 +3,7 @@ import logging
 import os
 from typing import Dict
 
-from lm_eval import utils
+from .. import utils
 
 
 eval_logger = logging.getLogger(__name__)

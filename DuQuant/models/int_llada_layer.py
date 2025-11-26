@@ -110,7 +110,7 @@ class QuantLLadaDecoderLayer(nn.Module):
             except ModuleNotFoundError:
                 pass
         
-        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] == 'duquant' else torch.tensor(1)
+        self.init_duquant_params = torch.tensor(0) if args.gate_weight_quant_params['quant_method'] in ['duquant', 'mxfp4'] else torch.tensor(1)
         
         # super().__init__(layer_id, config, cache)
         # # Layer norms.

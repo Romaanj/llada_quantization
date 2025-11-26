@@ -3,7 +3,7 @@ export HF_DATASETS_TRUST_REMOTE_CODE=true
 export HF_ALLOW_CODE_EVAL=1
 
 DIRPATH="$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-MODEL_PATH='/path/to/your/model' 
+MODEL_PATH='GSAI-ML/LLaDA-8B-Base'
 W_BIT=8
 A_BIT=8
 
@@ -82,13 +82,13 @@ python $DIRPATH/DuQuant/main.py \
 
 
 # HumanEval
-python $DIRPATH/DuQuant/main.py \
+python /DuQuant/main.py \
     --block_size 128 \
     --max_rotation_step 256 \
     --epochs 0 \
-    --wbits $W_BIT \
-    --abits $A_BIT \
-    --model $MODEL_PATH \
+    --wbits 4 \
+    --abits 4 \
+    --model GSAI-ML/LLaDA-8B-Base \
     --quant_method duquant \
     --alpha 0.5 \
     --smooth \
